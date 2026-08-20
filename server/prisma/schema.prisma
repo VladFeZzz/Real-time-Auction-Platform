@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum AuctionStatus {
+  DRAFT
+  ACTIVE
+  FINISHED
+  CANCELLED
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  name         String
+  balance      Decimal   @default(1000.00) @db.Decimal(12, 2)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  bids         Bid[]
+  wonAuctions  Auction[] @relation("AuctionWinner")
+  auctions     Auction[] @relation("AuctionCreator")
+}
+
+model Auction {
+  id           String        @id @default(uuid())
+  title        String
+  description  String
+  imageUrl     String?
+  startPrice   Decimal       @db.Decimal(12, 2)
+  currentPrice Decimal       @db.Decimal(12, 2)
+  minStep      Decimal       @default(5.00) @db.Decimal(12, 2)
+  status       AuctionStatus @default(DRAFT)
+  startsAt     DateTime      @default(now())
+  expiresAt    DateTime
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  creatorId    String
+  creator      User          @relation("AuctionCreator", fields: [creatorId], references: [id])
+
+  winnerId     String?
+  winner       User?         @relation("AuctionWinner", fields: [winnerId], references: [id])
+
+  bids         Bid[]
+
+  @@index([status, startsAt, expiresAt])
+  @@index([creatorId])
+  @@index([winnerId])
+}
+
+model Bid {
+  id        String   @id @default(uuid())
+  amount    Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @default(now())
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  auctionId String
+  auction   Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+
+  @@index([auctionId, createdAt])
+  @@index([userId, createdAt])
+}
