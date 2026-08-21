@@ -1,8 +1,14 @@
 import bcrypt from 'bcryptjs';
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
-import { createAccessToken } from './auth.tokens.js';
+import {
+  createAccessToken,
+  createRefreshToken,
+  getRefreshTokenExpiry,
+  hashToken,
+  verifyRefreshToken,
+} from './auth.tokens.js';
 
 const authRouter = Router();
 
@@ -16,6 +22,25 @@ const loginSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(1),
 });
+
+const refreshCookieOptions = {
+  httpOnly: true,
+  sameSite: 'lax' as const,
+  secure: process.env.NODE_ENV === 'production',
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+};
+
+async function issueRefreshToken(userId: string, response: Response) {
+  const refreshToken = createRefreshToken(userId);
+  await prisma.refreshToken.create({
+    data: {
+      tokenHash: hashToken(refreshToken),
+      userId,
+      expiresAt: getRefreshTokenExpiry(),
+    },
+  });
+  response.cookie('refreshToken', refreshToken, refreshCookieOptions);
+}
 
 authRouter.post('/register', async (request, response) => {
   const result = registerSchema.safeParse(request.body);
@@ -48,6 +73,7 @@ authRouter.post('/register', async (request, response) => {
     },
   });
 
+  await issueRefreshToken(user.id, response);
   response.status(201).json({
     user,
     accessToken: createAccessToken(user.id),
@@ -73,6 +99,7 @@ authRouter.post('/login', async (request, response) => {
     return;
   }
 
+  await issueRefreshToken(user.id, response);
   response.json({
     user: {
       id: user.id,
@@ -83,6 +110,65 @@ authRouter.post('/login', async (request, response) => {
     },
     accessToken: createAccessToken(user.id),
   });
+});
+
+authRouter.post('/refresh', async (request, response) => {
+  const token = request.cookies?.refreshToken as string | undefined;
+  if (!token) {
+    response.status(401).json({ message: 'Refresh token is missing' });
+    return;
+  }
+
+  try {
+    const payload = verifyRefreshToken(token);
+    const storedToken = await prisma.refreshToken.findUnique({
+      where: { tokenHash: hashToken(token) },
+    });
+    if (
+      !storedToken ||
+      storedToken.revokedAt ||
+      storedToken.expiresAt < new Date() ||
+      storedToken.userId !== payload.sub
+    ) {
+      response.status(401).json({ message: 'Refresh token is invalid' });
+      return;
+    }
+
+    const revokedToken = await prisma.refreshToken.updateMany({
+      where: { id: storedToken.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (revokedToken.count !== 1) {
+      response.status(401).json({ message: 'Refresh token is invalid' });
+      return;
+    }
+    await issueRefreshToken(storedToken.userId, response);
+    const user = await prisma.user.findUnique({
+      where: { id: storedToken.userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        balance: true,
+        createdAt: true,
+      },
+    });
+    response.json({ user, accessToken: createAccessToken(storedToken.userId) });
+  } catch {
+    response.status(401).json({ message: 'Refresh token is invalid' });
+  }
+});
+
+authRouter.post('/logout', async (request, response) => {
+  const token = request.cookies?.refreshToken as string | undefined;
+  if (token) {
+    await prisma.refreshToken.updateMany({
+      where: { tokenHash: hashToken(token), revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+  }
+  response.clearCookie('refreshToken', refreshCookieOptions);
+  response.status(204).send();
 });
 
 export default authRouter;

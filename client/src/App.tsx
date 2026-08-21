@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import './App.css';
 
 type View = 'home' | 'login' | 'register';
@@ -10,6 +10,24 @@ function App() {
   const [view, setView] = useState<View>('home');
   const [user, setUser] = useState<User | null>(null);
   const [authError, setAuthError] = useState('');
+
+  useEffect(() => {
+    const restoreSession = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (!response.ok) return;
+        const data = (await response.json()) as AuthResponse;
+        sessionStorage.setItem('accessToken', data.accessToken);
+        setUser(data.user);
+      } catch {
+        // An absent refresh cookie simply means the visitor is logged out.
+      }
+    };
+    void restoreSession();
+  }, []);
 
   const handleAuth = async (
     event: FormEvent<HTMLFormElement>,
@@ -25,6 +43,7 @@ function App() {
       const response = await fetch(`${API_URL}/api/auth/${mode}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
       const data = (await response.json()) as
@@ -85,6 +104,10 @@ function App() {
                 className="button-secondary"
                 onClick={() => {
                   sessionStorage.removeItem('accessToken');
+                  void fetch(`${API_URL}/api/auth/logout`, {
+                    method: 'POST',
+                    credentials: 'include',
+                  });
                   setUser(null);
                 }}
                 type="button"
