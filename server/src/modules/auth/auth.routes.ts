@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import { Router, type Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma.js';
+import { requireAuth, type AuthenticatedRequest } from './auth.middleware.js';
 import {
   createAccessToken,
   createRefreshToken,
@@ -169,6 +170,27 @@ authRouter.post('/logout', async (request, response) => {
   }
   response.clearCookie('refreshToken', refreshCookieOptions);
   response.status(204).send();
+});
+
+authRouter.get('/me', requireAuth, async (request, response) => {
+  const { userId } = request as AuthenticatedRequest;
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      balance: true,
+      createdAt: true,
+    },
+  });
+
+  if (!user) {
+    response.status(401).json({ message: 'User no longer exists' });
+    return;
+  }
+
+  response.json({ user });
 });
 
 export default authRouter;
