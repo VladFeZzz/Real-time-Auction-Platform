@@ -26,6 +26,21 @@ model User {
   bids         Bid[]
   wonAuctions  Auction[] @relation("AuctionWinner")
   auctions     Auction[] @relation("AuctionCreator")
+  refreshTokens RefreshToken[]
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model Auction {
