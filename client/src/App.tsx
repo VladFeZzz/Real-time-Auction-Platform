@@ -10,72 +10,28 @@ type AuthResponse = { user: User; accessToken: string };
 type AuctionCard = {
   id: string;
   title: string;
-  category: string;
   description: string;
+  imageUrl: string | null;
   currentPrice: number;
   minStep: number;
-  bids: number;
+  bidsCount: number;
   status: AuctionStatus;
   expiresAt: string;
-  imageEmoji: string;
+  creator: {
+    id: string;
+    name: string;
+  };
+};
+
+type AuctionsResponse = {
+  items: AuctionCard[];
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 };
 
 const API_URL = 'http://localhost:5000';
-
-const MOCK_AUCTIONS: AuctionCard[] = [
-  {
-    id: 'LOT-1001',
-    title: 'Rolex Oyster Perpetual 1972',
-    category: 'Watches',
-    description: 'Serviced vintage piece with original bracelet and box.',
-    currentPrice: 1280,
-    minStep: 25,
-    bids: 14,
-    status: 'ACTIVE',
-    expiresAt: new Date(
-      Date.now() + 2 * 60 * 60 * 1000 + 14 * 60 * 1000,
-    ).toISOString(),
-    imageEmoji: '⌚',
-  },
-  {
-    id: 'LOT-1012',
-    title: 'Leica M6 Film Camera',
-    category: 'Photography',
-    description: 'Body in excellent condition, meter works perfectly.',
-    currentPrice: 920,
-    minStep: 20,
-    bids: 9,
-    status: 'ACTIVE',
-    expiresAt: new Date(
-      Date.now() + 5 * 60 * 60 * 1000 + 2 * 60 * 1000,
-    ).toISOString(),
-    imageEmoji: '📷',
-  },
-  {
-    id: 'LOT-1027',
-    title: 'Signed First Edition Dune',
-    category: 'Books',
-    description: 'Rare first print with signed title page and certificate.',
-    currentPrice: 610,
-    minStep: 15,
-    bids: 18,
-    status: 'FINISHED',
-    expiresAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-    imageEmoji: '📘',
-  },
-  {
-    id: 'LOT-1040',
-    title: 'Yamaha CS-60 Synthesizer',
-    category: 'Audio',
-    description: 'Restored analog classic, fully playable studio condition.',
-    currentPrice: 2450,
-    minStep: 50,
-    bids: 6,
-    status: 'DRAFT',
-    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    imageEmoji: '🎛️',
-  },
-];
 
 function formatCountdown(expiresAt: string, now: number) {
   const totalMs = new Date(expiresAt).getTime() - now;
@@ -370,7 +326,13 @@ function AuctionFeedPage({
   const [statusFilter, setStatusFilter] = useState<'ALL' | AuctionStatus>(
     'ALL',
   );
+  const [page, setPage] = useState(1);
   const [now, setNow] = useState(() => Date.now());
+  const [auctions, setAuctions] = useState<AuctionCard[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -380,11 +342,55 @@ function AuctionFeedPage({
     return () => window.clearInterval(timer);
   }, []);
 
-  const visibleAuctions = useMemo(() => {
-    return MOCK_AUCTIONS.filter((auction) =>
-      statusFilter === 'ALL' ? true : auction.status === statusFilter,
-    );
-  }, [statusFilter]);
+  useEffect(() => {
+    const loadAuctions = async () => {
+      setIsLoading(true);
+      setError('');
+
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: '6',
+      });
+
+      if (statusFilter !== 'ALL') {
+        params.set('status', statusFilter);
+      }
+
+      try {
+        const response = await fetch(
+          `${API_URL}/api/auctions?${params.toString()}`,
+        );
+        const data = (await response.json()) as
+          | AuctionsResponse
+          | { message?: string };
+
+        if (!response.ok || !('items' in data)) {
+          setError(
+            'message' in data && data.message
+              ? data.message
+              : 'Cannot load auctions',
+          );
+          setAuctions([]);
+          return;
+        }
+
+        setAuctions(data.items);
+        setTotal(data.total);
+        setTotalPages(data.totalPages);
+      } catch {
+        setError(
+          'Cannot connect to API. Ensure backend is running on port 5000.',
+        );
+        setAuctions([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    void loadAuctions();
+  }, [page, statusFilter]);
+
+  const visibleAuctions = useMemo(() => auctions, [auctions]);
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-50">
@@ -398,7 +404,10 @@ function AuctionFeedPage({
               <button
                 key={status}
                 className={`filter-tab ${statusFilter === status ? 'filter-tab--active' : ''}`}
-                onClick={() => setStatusFilter(status)}
+                onClick={() => {
+                  setStatusFilter(status);
+                  setPage(1);
+                }}
                 type="button"
               >
                 {status}
@@ -414,15 +423,29 @@ function AuctionFeedPage({
               Live lots and fresh opportunities
             </h1>
             <p className="mt-3 max-w-2xl text-slate-400">
-              Step 1 frontend: static feed and interactions. Next step we will
-              connect this screen to real backend auction endpoints.
+              Connected to backend API with filtering and pagination.
             </p>
           </div>
           <div className="text-right text-sm text-slate-400">
-            <p>{visibleAuctions.length} lots visible</p>
+            <p>{visibleAuctions.length} lots on this page</p>
+            <p>{total} total lots</p>
             <p>{user ? `Signed in as ${user.name}` : 'Guest mode'}</p>
           </div>
         </header>
+
+        {error && (
+          <p className="mt-6 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+            {error}
+          </p>
+        )}
+
+        {isLoading && (
+          <p className="mt-6 text-slate-400">Loading auctions...</p>
+        )}
+
+        {!isLoading && !error && visibleAuctions.length === 0 && (
+          <p className="mt-6 text-slate-400">No lots found for this filter.</p>
+        )}
 
         <section className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {visibleAuctions.map((auction) => {
@@ -435,11 +458,19 @@ function AuctionFeedPage({
                 className="auction-card animate-fade-up"
               >
                 <div className="flex items-center justify-between text-xs uppercase tracking-[0.12em] text-slate-400">
-                  <span>{auction.category}</span>
+                  <span>{auction.creator.name}</span>
                   <span>{auction.id}</span>
                 </div>
                 <div className="auction-card__image mt-4">
-                  {auction.imageEmoji}
+                  {auction.imageUrl ? (
+                    <img
+                      src={auction.imageUrl}
+                      alt={auction.title}
+                      className="auction-card__img"
+                    />
+                  ) : (
+                    <span>◇</span>
+                  )}
                 </div>
                 <h2 className="mt-4 text-lg font-semibold text-slate-50 line-clamp-1">
                   {auction.title}
@@ -457,7 +488,7 @@ function AuctionFeedPage({
 
                 <div className="mt-3 flex items-center justify-between text-sm">
                   <p className="text-slate-400">Min step: ${auction.minStep}</p>
-                  <p className="text-slate-500">{auction.bids} bids</p>
+                  <p className="text-slate-500">{auction.bidsCount} bids</p>
                 </div>
 
                 <div className="mt-4 flex items-center justify-between border-t border-slate-800 pt-4">
@@ -492,6 +523,30 @@ function AuctionFeedPage({
             );
           })}
         </section>
+
+        <div className="mt-8 flex items-center justify-between border-t border-slate-800 pt-5 text-sm text-slate-400">
+          <p>
+            Page {page} of {totalPages}
+          </p>
+          <div className="flex gap-2">
+            <button
+              className="button-secondary"
+              disabled={page <= 1 || isLoading}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              type="button"
+            >
+              Previous
+            </button>
+            <button
+              className="button-secondary"
+              disabled={page >= totalPages || isLoading}
+              onClick={() => setPage((current) => current + 1)}
+              type="button"
+            >
+              Next
+            </button>
+          </div>
+        </div>
       </div>
     </main>
   );
