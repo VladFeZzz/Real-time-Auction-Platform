@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import './App.css';
 
-type View = 'home' | 'login' | 'register' | 'auctions';
-type AuctionStatus = 'ACTIVE' | 'FINISHED' | 'DRAFT';
+type View = 'home' | 'login' | 'register' | 'auctions' | 'lot';
+type AuctionStatus = 'ACTIVE' | 'FINISHED' | 'DRAFT' | 'CANCELLED';
 
 type User = { id: string; name: string; email: string; balance: string };
 type AuthResponse = { user: User; accessToken: string };
@@ -23,12 +23,37 @@ type AuctionCard = {
   };
 };
 
+type AuctionBid = {
+  id: string;
+  amount: number;
+  createdAt: string;
+  user: {
+    id: string;
+    name: string;
+  };
+};
+
+type AuctionDetail = AuctionCard & {
+  startPrice: number;
+  startsAt: string;
+  createdAt: string;
+  winner: {
+    id: string;
+    name: string;
+  } | null;
+  bids: AuctionBid[];
+};
+
 type AuctionsResponse = {
   items: AuctionCard[];
   page: number;
   limit: number;
   total: number;
   totalPages: number;
+};
+
+type AuctionDetailResponse = {
+  item: AuctionDetail;
 };
 
 const API_URL = 'http://localhost:5000';
@@ -52,6 +77,7 @@ function App() {
   const [view, setView] = useState<View>('home');
   const [user, setUser] = useState<User | null>(null);
   const [authError, setAuthError] = useState('');
+  const [selectedLotId, setSelectedLotId] = useState<string | null>(null);
 
   useEffect(() => {
     const restoreSession = async () => {
@@ -132,6 +158,20 @@ function App() {
       <AuctionFeedPage
         user={user}
         onBack={() => setView('home')}
+        onOpenLot={(auctionId) => {
+          setSelectedLotId(auctionId);
+          setView('lot');
+        }}
+      />
+    );
+  }
+
+  if (view === 'lot' && selectedLotId) {
+    return (
+      <LotDetailPage
+        lotId={selectedLotId}
+        user={user}
+        onBack={() => setView('auctions')}
         onGoLogin={() => setView('login')}
       />
     );
@@ -317,11 +357,11 @@ function App() {
 function AuctionFeedPage({
   user,
   onBack,
-  onGoLogin,
+  onOpenLot,
 }: {
   user: User | null;
   onBack: () => void;
-  onGoLogin: () => void;
+  onOpenLot: (auctionId: string) => void;
 }) {
   const [statusFilter, setStatusFilter] = useState<'ALL' | AuctionStatus>(
     'ALL',
@@ -400,19 +440,21 @@ function AuctionFeedPage({
             &lt;- Back to home
           </button>
           <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/70 p-1 text-sm">
-            {(['ALL', 'ACTIVE', 'FINISHED', 'DRAFT'] as const).map((status) => (
-              <button
-                key={status}
-                className={`filter-tab ${statusFilter === status ? 'filter-tab--active' : ''}`}
-                onClick={() => {
-                  setStatusFilter(status);
-                  setPage(1);
-                }}
-                type="button"
-              >
-                {status}
-              </button>
-            ))}
+            {(['ALL', 'ACTIVE', 'FINISHED', 'DRAFT', 'CANCELLED'] as const).map(
+              (status) => (
+                <button
+                  key={status}
+                  className={`filter-tab ${statusFilter === status ? 'filter-tab--active' : ''}`}
+                  onClick={() => {
+                    setStatusFilter(status);
+                    setPage(1);
+                  }}
+                  type="button"
+                >
+                  {status}
+                </button>
+              ),
+            )}
           </div>
         </div>
 
@@ -510,14 +552,10 @@ function AuctionFeedPage({
 
                 <button
                   className="button-primary mt-5 w-full justify-center"
-                  onClick={() => {
-                    if (!user) {
-                      onGoLogin();
-                    }
-                  }}
+                  onClick={() => onOpenLot(auction.id)}
                   type="button"
                 >
-                  {user ? 'Open lot' : 'Log in to bid'}
+                  Open lot
                 </button>
               </article>
             );
@@ -547,6 +585,201 @@ function AuctionFeedPage({
             </button>
           </div>
         </div>
+      </div>
+    </main>
+  );
+}
+
+function LotDetailPage({
+  lotId,
+  user,
+  onBack,
+  onGoLogin,
+}: {
+  lotId: string;
+  user: User | null;
+  onBack: () => void;
+  onGoLogin: () => void;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  const [lot, setLot] = useState<AuctionDetail | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const loadLot = async () => {
+      setIsLoading(true);
+      setError('');
+
+      try {
+        const response = await fetch(`${API_URL}/api/auctions/${lotId}`);
+        const data = (await response.json()) as
+          | AuctionDetailResponse
+          | { message?: string };
+
+        if (!response.ok || !('item' in data)) {
+          setError(
+            'message' in data && data.message
+              ? data.message
+              : 'Cannot load auction details',
+          );
+          setLot(null);
+          return;
+        }
+
+        setLot(data.item);
+      } catch {
+        setError(
+          'Cannot connect to API. Ensure backend is running on port 5000.',
+        );
+        setLot(null);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    void loadLot();
+  }, [lotId]);
+
+  const countdown = lot ? formatCountdown(lot.expiresAt, now) : '...';
+  const isLive = lot?.status === 'ACTIVE' && countdown !== 'Ended';
+
+  return (
+    <main className="min-h-screen bg-slate-950 text-slate-50">
+      <div className="mx-auto max-w-7xl px-6 pb-12 pt-8 lg:px-10">
+        <button className="button-ghost" onClick={onBack} type="button">
+          &lt;- Back to auctions
+        </button>
+
+        {isLoading && (
+          <p className="mt-6 text-slate-400">Loading lot details...</p>
+        )}
+
+        {error && (
+          <p className="mt-6 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+            {error}
+          </p>
+        )}
+
+        {!isLoading && !error && lot && (
+          <div className="mt-6 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+            <section className="lot-panel animate-fade-up">
+              <div className="lot-image-wrap">
+                {lot.imageUrl ? (
+                  <img
+                    src={lot.imageUrl}
+                    alt={lot.title}
+                    className="lot-image"
+                  />
+                ) : (
+                  <span className="text-7xl text-indigo-300">◇</span>
+                )}
+              </div>
+              <div className="mt-6 flex items-center justify-between">
+                <span
+                  className={`status-chip status-chip--${lot.status.toLowerCase()}`}
+                >
+                  {lot.status}
+                </span>
+                <span className={isLive ? 'text-amber-400' : 'text-slate-500'}>
+                  {isLive
+                    ? countdown
+                    : lot.status === 'FINISHED'
+                      ? 'Closed'
+                      : countdown}
+                </span>
+              </div>
+              <h1 className="mt-4 text-3xl font-semibold tracking-tight">
+                {lot.title}
+              </h1>
+              <p className="mt-3 text-slate-400">{lot.description}</p>
+
+              <div className="mt-6 grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
+                <div className="lot-stat">
+                  <span>Current price</span>
+                  <strong>${lot.currentPrice}</strong>
+                </div>
+                <div className="lot-stat">
+                  <span>Start price</span>
+                  <strong>${lot.startPrice}</strong>
+                </div>
+                <div className="lot-stat">
+                  <span>Min step</span>
+                  <strong>${lot.minStep}</strong>
+                </div>
+                <div className="lot-stat">
+                  <span>Total bids</span>
+                  <strong>{lot.bidsCount}</strong>
+                </div>
+              </div>
+
+              <button
+                className="button-primary mt-6"
+                onClick={() => {
+                  if (!user) onGoLogin();
+                }}
+                type="button"
+              >
+                {user ? 'Place bid (next step)' : 'Log in to bid'}
+              </button>
+            </section>
+
+            <aside className="lot-panel animate-fade-up [animation-delay:120ms]">
+              <h2 className="text-xl font-semibold">Lot details</h2>
+              <div className="mt-4 space-y-3 text-sm text-slate-300">
+                <p>
+                  <span className="text-slate-500">Seller:</span>{' '}
+                  {lot.creator.name}
+                </p>
+                <p>
+                  <span className="text-slate-500">Starts at:</span>{' '}
+                  {new Date(lot.startsAt).toLocaleString()}
+                </p>
+                <p>
+                  <span className="text-slate-500">Expires at:</span>{' '}
+                  {new Date(lot.expiresAt).toLocaleString()}
+                </p>
+                <p>
+                  <span className="text-slate-500">Winner:</span>{' '}
+                  {lot.winner?.name ?? 'Not decided'}
+                </p>
+              </div>
+
+              <h3 className="mt-8 text-sm font-semibold uppercase tracking-wider text-slate-400">
+                Latest bids
+              </h3>
+              <div className="mt-3 divide-y divide-slate-800 rounded-xl border border-slate-800 bg-slate-900/60">
+                {lot.bids.length === 0 && (
+                  <p className="p-4 text-sm text-slate-500">No bids yet</p>
+                )}
+                {lot.bids.map((bid) => (
+                  <div
+                    key={bid.id}
+                    className="flex items-center justify-between p-3 text-sm"
+                  >
+                    <div>
+                      <p className="font-medium text-slate-200">
+                        {bid.user.name}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {new Date(bid.createdAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <strong className="text-indigo-400">${bid.amount}</strong>
+                  </div>
+                ))}
+              </div>
+            </aside>
+          </div>
+        )}
       </div>
     </main>
   );
