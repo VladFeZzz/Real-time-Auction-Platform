@@ -1,0 +1,83 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { prisma } from '../../lib/prisma.js';
+
+const auctionsRouter = Router();
+
+const querySchema = z.object({
+  status: z.enum(['ACTIVE', 'FINISHED', 'DRAFT', 'CANCELLED']).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(12),
+});
+
+auctionsRouter.get('/', async (request, response) => {
+  const parsed = querySchema.safeParse(request.query);
+
+  if (!parsed.success) {
+    response.status(400).json({
+      message: 'Invalid query parameters',
+      errors: parsed.error.flatten().fieldErrors,
+    });
+    return;
+  }
+
+  const { status, page, limit } = parsed.data;
+  const where = status ? { status } : {};
+  const skip = (page - 1) * limit;
+
+  const [total, auctions] = await Promise.all([
+    prisma.auction.count({ where }),
+    prisma.auction.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        imageUrl: true,
+        currentPrice: true,
+        minStep: true,
+        status: true,
+        expiresAt: true,
+        createdAt: true,
+        creator: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        _count: {
+          select: {
+            bids: true,
+          },
+        },
+      },
+    }),
+  ]);
+
+  const items = auctions.map((auction) => ({
+    id: auction.id,
+    title: auction.title,
+    description: auction.description,
+    imageUrl: auction.imageUrl,
+    currentPrice: Number(auction.currentPrice),
+    minStep: Number(auction.minStep),
+    status: auction.status,
+    expiresAt: auction.expiresAt,
+    createdAt: auction.createdAt,
+    bidsCount: auction._count.bids,
+    creator: auction.creator,
+  }));
+
+  response.json({
+    items,
+    page,
+    limit,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / limit)),
+  });
+});
+
+export default auctionsRouter;
