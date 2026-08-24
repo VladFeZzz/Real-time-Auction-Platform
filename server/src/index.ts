@@ -5,6 +5,7 @@ import express from 'express';
 import helmet from 'helmet';
 import { prisma } from './lib/prisma.js';
 import authRouter from './modules/auth/auth.routes.js';
+import auctionsRouter from './modules/auctions/auctions.routes.js';
 
 dotenv.config();
 
@@ -21,6 +22,7 @@ app.use(
 app.use(express.json());
 app.use(cookieParser());
 app.use('/api/auth', authRouter);
+app.use('/api/auctions', auctionsRouter);
 
 app.get('/', (_request, response) => {
   response.json({
@@ -48,29 +50,6 @@ app.get('/api/health', async (_request, response) => {
         error instanceof Error ? error.message : 'Unknown database error',
     });
   }
-});
-
-app.get('/api/auctions', async (_request, response) => {
-  const auctions = await prisma.auction.findMany({
-    orderBy: { createdAt: 'desc' },
-    include: {
-      creator: {
-        select: {
-          id: true,
-          name: true,
-        },
-      },
-      winner: {
-        select: {
-          id: true,
-          name: true,
-        },
-      },
-    },
-    take: 20,
-  });
-
-  response.json(auctions);
 });
 
 app.listen(port, () => {

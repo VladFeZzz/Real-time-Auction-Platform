@@ -1,10 +1,52 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import './App.css';
 
-type View = 'home' | 'login' | 'register';
+type View = 'home' | 'login' | 'register' | 'auctions';
+type AuctionStatus = 'ACTIVE' | 'FINISHED' | 'DRAFT';
+
 type User = { id: string; name: string; email: string; balance: string };
 type AuthResponse = { user: User; accessToken: string };
+
+type AuctionCard = {
+  id: string;
+  title: string;
+  description: string;
+  imageUrl: string | null;
+  currentPrice: number;
+  minStep: number;
+  bidsCount: number;
+  status: AuctionStatus;
+  expiresAt: string;
+  creator: {
+    id: string;
+    name: string;
+  };
+};
+
+type AuctionsResponse = {
+  items: AuctionCard[];
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+};
+
 const API_URL = 'http://localhost:5000';
+
+function formatCountdown(expiresAt: string, now: number) {
+  const totalMs = new Date(expiresAt).getTime() - now;
+  if (totalMs <= 0) {
+    return 'Ended';
+  }
+
+  const hours = Math.floor(totalMs / (1000 * 60 * 60));
+  const minutes = Math.floor((totalMs % (1000 * 60 * 60)) / (1000 * 60));
+  const seconds = Math.floor((totalMs % (1000 * 60)) / 1000);
+
+  return `${hours.toString().padStart(2, '0')}:${minutes
+    .toString()
+    .padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
 
 function App() {
   const [view, setView] = useState<View>('home');
@@ -85,6 +127,16 @@ function App() {
     );
   }
 
+  if (view === 'auctions') {
+    return (
+      <AuctionFeedPage
+        user={user}
+        onBack={() => setView('home')}
+        onGoLogin={() => setView('login')}
+      />
+    );
+  }
+
   return (
     <main className="min-h-screen overflow-hidden bg-slate-950 text-slate-50">
       <nav className="mx-auto flex max-w-7xl items-center justify-between px-6 py-6 lg:px-10">
@@ -153,11 +205,10 @@ function App() {
           <div className="mt-9 flex flex-wrap gap-3">
             <button
               className="button-primary"
-              onClick={() => setView(user ? 'home' : 'register')}
+              onClick={() => setView('auctions')}
               type="button"
             >
-              {user ? 'Browse auctions' : 'Start bidding'}{' '}
-              <span aria-hidden="true">-&gt;</span>
+              Browse auctions <span aria-hidden="true">-&gt;</span>
             </button>
             {!user && (
               <button
@@ -217,7 +268,7 @@ function App() {
               </div>
               <button
                 className="button-primary"
-                onClick={() => setView(user ? 'home' : 'register')}
+                onClick={() => setView('auctions')}
                 type="button"
               >
                 View lot
@@ -259,6 +310,244 @@ function App() {
           </div>
         </div>
       </section>
+    </main>
+  );
+}
+
+function AuctionFeedPage({
+  user,
+  onBack,
+  onGoLogin,
+}: {
+  user: User | null;
+  onBack: () => void;
+  onGoLogin: () => void;
+}) {
+  const [statusFilter, setStatusFilter] = useState<'ALL' | AuctionStatus>(
+    'ALL',
+  );
+  const [page, setPage] = useState(1);
+  const [now, setNow] = useState(() => Date.now());
+  const [auctions, setAuctions] = useState<AuctionCard[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const loadAuctions = async () => {
+      setIsLoading(true);
+      setError('');
+
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: '6',
+      });
+
+      if (statusFilter !== 'ALL') {
+        params.set('status', statusFilter);
+      }
+
+      try {
+        const response = await fetch(
+          `${API_URL}/api/auctions?${params.toString()}`,
+        );
+        const data = (await response.json()) as
+          | AuctionsResponse
+          | { message?: string };
+
+        if (!response.ok || !('items' in data)) {
+          setError(
+            'message' in data && data.message
+              ? data.message
+              : 'Cannot load auctions',
+          );
+          setAuctions([]);
+          return;
+        }
+
+        setAuctions(data.items);
+        setTotal(data.total);
+        setTotalPages(data.totalPages);
+      } catch {
+        setError(
+          'Cannot connect to API. Ensure backend is running on port 5000.',
+        );
+        setAuctions([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    void loadAuctions();
+  }, [page, statusFilter]);
+
+  const visibleAuctions = useMemo(() => auctions, [auctions]);
+
+  return (
+    <main className="min-h-screen bg-slate-950 text-slate-50">
+      <div className="mx-auto max-w-7xl px-6 pb-12 pt-8 lg:px-10">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <button className="button-ghost" onClick={onBack} type="button">
+            &lt;- Back to home
+          </button>
+          <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/70 p-1 text-sm">
+            {(['ALL', 'ACTIVE', 'FINISHED', 'DRAFT'] as const).map((status) => (
+              <button
+                key={status}
+                className={`filter-tab ${statusFilter === status ? 'filter-tab--active' : ''}`}
+                onClick={() => {
+                  setStatusFilter(status);
+                  setPage(1);
+                }}
+                type="button"
+              >
+                {status}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <header className="mt-8 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="eyebrow">Auction Feed</p>
+            <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">
+              Live lots and fresh opportunities
+            </h1>
+            <p className="mt-3 max-w-2xl text-slate-400">
+              Connected to backend API with filtering and pagination.
+            </p>
+          </div>
+          <div className="text-right text-sm text-slate-400">
+            <p>{visibleAuctions.length} lots on this page</p>
+            <p>{total} total lots</p>
+            <p>{user ? `Signed in as ${user.name}` : 'Guest mode'}</p>
+          </div>
+        </header>
+
+        {error && (
+          <p className="mt-6 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+            {error}
+          </p>
+        )}
+
+        {isLoading && (
+          <p className="mt-6 text-slate-400">Loading auctions...</p>
+        )}
+
+        {!isLoading && !error && visibleAuctions.length === 0 && (
+          <p className="mt-6 text-slate-400">No lots found for this filter.</p>
+        )}
+
+        <section className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {visibleAuctions.map((auction) => {
+            const countdown = formatCountdown(auction.expiresAt, now);
+            const isLive = auction.status === 'ACTIVE' && countdown !== 'Ended';
+
+            return (
+              <article
+                key={auction.id}
+                className="auction-card animate-fade-up"
+              >
+                <div className="flex items-center justify-between text-xs uppercase tracking-[0.12em] text-slate-400">
+                  <span>{auction.creator.name}</span>
+                  <span>{auction.id}</span>
+                </div>
+                <div className="auction-card__image mt-4">
+                  {auction.imageUrl ? (
+                    <img
+                      src={auction.imageUrl}
+                      alt={auction.title}
+                      className="auction-card__img"
+                    />
+                  ) : (
+                    <span>◇</span>
+                  )}
+                </div>
+                <h2 className="mt-4 text-lg font-semibold text-slate-50 line-clamp-1">
+                  {auction.title}
+                </h2>
+                <p className="mt-2 line-clamp-2 text-sm text-slate-400">
+                  {auction.description}
+                </p>
+
+                <div className="mt-5 flex items-center justify-between">
+                  <p className="text-sm text-slate-500">Current price</p>
+                  <p className="text-2xl font-black tracking-tight text-indigo-400">
+                    ${auction.currentPrice}
+                  </p>
+                </div>
+
+                <div className="mt-3 flex items-center justify-between text-sm">
+                  <p className="text-slate-400">Min step: ${auction.minStep}</p>
+                  <p className="text-slate-500">{auction.bidsCount} bids</p>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between border-t border-slate-800 pt-4">
+                  <span
+                    className={`status-chip status-chip--${auction.status.toLowerCase()}`}
+                  >
+                    {auction.status}
+                  </span>
+                  <span
+                    className={isLive ? 'text-amber-400' : 'text-slate-500'}
+                  >
+                    {isLive
+                      ? countdown
+                      : auction.status === 'FINISHED'
+                        ? 'Closed'
+                        : countdown}
+                  </span>
+                </div>
+
+                <button
+                  className="button-primary mt-5 w-full justify-center"
+                  onClick={() => {
+                    if (!user) {
+                      onGoLogin();
+                    }
+                  }}
+                  type="button"
+                >
+                  {user ? 'Open lot' : 'Log in to bid'}
+                </button>
+              </article>
+            );
+          })}
+        </section>
+
+        <div className="mt-8 flex items-center justify-between border-t border-slate-800 pt-5 text-sm text-slate-400">
+          <p>
+            Page {page} of {totalPages}
+          </p>
+          <div className="flex gap-2">
+            <button
+              className="button-secondary"
+              disabled={page <= 1 || isLoading}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              type="button"
+            >
+              Previous
+            </button>
+            <button
+              className="button-secondary"
+              disabled={page >= totalPages || isLoading}
+              onClick={() => setPage((current) => current + 1)}
+              type="button"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      </div>
     </main>
   );
 }
