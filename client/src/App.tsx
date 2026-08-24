@@ -1,10 +1,96 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import './App.css';
 
-type View = 'home' | 'login' | 'register';
+type View = 'home' | 'login' | 'register' | 'auctions';
+type AuctionStatus = 'ACTIVE' | 'FINISHED' | 'DRAFT';
+
 type User = { id: string; name: string; email: string; balance: string };
 type AuthResponse = { user: User; accessToken: string };
+
+type AuctionCard = {
+  id: string;
+  title: string;
+  category: string;
+  description: string;
+  currentPrice: number;
+  minStep: number;
+  bids: number;
+  status: AuctionStatus;
+  expiresAt: string;
+  imageEmoji: string;
+};
+
 const API_URL = 'http://localhost:5000';
+
+const MOCK_AUCTIONS: AuctionCard[] = [
+  {
+    id: 'LOT-1001',
+    title: 'Rolex Oyster Perpetual 1972',
+    category: 'Watches',
+    description: 'Serviced vintage piece with original bracelet and box.',
+    currentPrice: 1280,
+    minStep: 25,
+    bids: 14,
+    status: 'ACTIVE',
+    expiresAt: new Date(
+      Date.now() + 2 * 60 * 60 * 1000 + 14 * 60 * 1000,
+    ).toISOString(),
+    imageEmoji: '⌚',
+  },
+  {
+    id: 'LOT-1012',
+    title: 'Leica M6 Film Camera',
+    category: 'Photography',
+    description: 'Body in excellent condition, meter works perfectly.',
+    currentPrice: 920,
+    minStep: 20,
+    bids: 9,
+    status: 'ACTIVE',
+    expiresAt: new Date(
+      Date.now() + 5 * 60 * 60 * 1000 + 2 * 60 * 1000,
+    ).toISOString(),
+    imageEmoji: '📷',
+  },
+  {
+    id: 'LOT-1027',
+    title: 'Signed First Edition Dune',
+    category: 'Books',
+    description: 'Rare first print with signed title page and certificate.',
+    currentPrice: 610,
+    minStep: 15,
+    bids: 18,
+    status: 'FINISHED',
+    expiresAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    imageEmoji: '📘',
+  },
+  {
+    id: 'LOT-1040',
+    title: 'Yamaha CS-60 Synthesizer',
+    category: 'Audio',
+    description: 'Restored analog classic, fully playable studio condition.',
+    currentPrice: 2450,
+    minStep: 50,
+    bids: 6,
+    status: 'DRAFT',
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    imageEmoji: '🎛️',
+  },
+];
+
+function formatCountdown(expiresAt: string, now: number) {
+  const totalMs = new Date(expiresAt).getTime() - now;
+  if (totalMs <= 0) {
+    return 'Ended';
+  }
+
+  const hours = Math.floor(totalMs / (1000 * 60 * 60));
+  const minutes = Math.floor((totalMs % (1000 * 60 * 60)) / (1000 * 60));
+  const seconds = Math.floor((totalMs % (1000 * 60)) / 1000);
+
+  return `${hours.toString().padStart(2, '0')}:${minutes
+    .toString()
+    .padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
 
 function App() {
   const [view, setView] = useState<View>('home');
@@ -85,6 +171,16 @@ function App() {
     );
   }
 
+  if (view === 'auctions') {
+    return (
+      <AuctionFeedPage
+        user={user}
+        onBack={() => setView('home')}
+        onGoLogin={() => setView('login')}
+      />
+    );
+  }
+
   return (
     <main className="min-h-screen overflow-hidden bg-slate-950 text-slate-50">
       <nav className="mx-auto flex max-w-7xl items-center justify-between px-6 py-6 lg:px-10">
@@ -153,11 +249,10 @@ function App() {
           <div className="mt-9 flex flex-wrap gap-3">
             <button
               className="button-primary"
-              onClick={() => setView(user ? 'home' : 'register')}
+              onClick={() => setView('auctions')}
               type="button"
             >
-              {user ? 'Browse auctions' : 'Start bidding'}{' '}
-              <span aria-hidden="true">-&gt;</span>
+              Browse auctions <span aria-hidden="true">-&gt;</span>
             </button>
             {!user && (
               <button
@@ -217,7 +312,7 @@ function App() {
               </div>
               <button
                 className="button-primary"
-                onClick={() => setView(user ? 'home' : 'register')}
+                onClick={() => setView('auctions')}
                 type="button"
               >
                 View lot
@@ -259,6 +354,145 @@ function App() {
           </div>
         </div>
       </section>
+    </main>
+  );
+}
+
+function AuctionFeedPage({
+  user,
+  onBack,
+  onGoLogin,
+}: {
+  user: User | null;
+  onBack: () => void;
+  onGoLogin: () => void;
+}) {
+  const [statusFilter, setStatusFilter] = useState<'ALL' | AuctionStatus>(
+    'ALL',
+  );
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const visibleAuctions = useMemo(() => {
+    return MOCK_AUCTIONS.filter((auction) =>
+      statusFilter === 'ALL' ? true : auction.status === statusFilter,
+    );
+  }, [statusFilter]);
+
+  return (
+    <main className="min-h-screen bg-slate-950 text-slate-50">
+      <div className="mx-auto max-w-7xl px-6 pb-12 pt-8 lg:px-10">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <button className="button-ghost" onClick={onBack} type="button">
+            &lt;- Back to home
+          </button>
+          <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-900/70 p-1 text-sm">
+            {(['ALL', 'ACTIVE', 'FINISHED', 'DRAFT'] as const).map((status) => (
+              <button
+                key={status}
+                className={`filter-tab ${statusFilter === status ? 'filter-tab--active' : ''}`}
+                onClick={() => setStatusFilter(status)}
+                type="button"
+              >
+                {status}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <header className="mt-8 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="eyebrow">Auction Feed</p>
+            <h1 className="mt-3 text-4xl font-semibold tracking-tight sm:text-5xl">
+              Live lots and fresh opportunities
+            </h1>
+            <p className="mt-3 max-w-2xl text-slate-400">
+              Step 1 frontend: static feed and interactions. Next step we will
+              connect this screen to real backend auction endpoints.
+            </p>
+          </div>
+          <div className="text-right text-sm text-slate-400">
+            <p>{visibleAuctions.length} lots visible</p>
+            <p>{user ? `Signed in as ${user.name}` : 'Guest mode'}</p>
+          </div>
+        </header>
+
+        <section className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {visibleAuctions.map((auction) => {
+            const countdown = formatCountdown(auction.expiresAt, now);
+            const isLive = auction.status === 'ACTIVE' && countdown !== 'Ended';
+
+            return (
+              <article
+                key={auction.id}
+                className="auction-card animate-fade-up"
+              >
+                <div className="flex items-center justify-between text-xs uppercase tracking-[0.12em] text-slate-400">
+                  <span>{auction.category}</span>
+                  <span>{auction.id}</span>
+                </div>
+                <div className="auction-card__image mt-4">
+                  {auction.imageEmoji}
+                </div>
+                <h2 className="mt-4 text-lg font-semibold text-slate-50 line-clamp-1">
+                  {auction.title}
+                </h2>
+                <p className="mt-2 line-clamp-2 text-sm text-slate-400">
+                  {auction.description}
+                </p>
+
+                <div className="mt-5 flex items-center justify-between">
+                  <p className="text-sm text-slate-500">Current price</p>
+                  <p className="text-2xl font-black tracking-tight text-indigo-400">
+                    ${auction.currentPrice}
+                  </p>
+                </div>
+
+                <div className="mt-3 flex items-center justify-between text-sm">
+                  <p className="text-slate-400">Min step: ${auction.minStep}</p>
+                  <p className="text-slate-500">{auction.bids} bids</p>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between border-t border-slate-800 pt-4">
+                  <span
+                    className={`status-chip status-chip--${auction.status.toLowerCase()}`}
+                  >
+                    {auction.status}
+                  </span>
+                  <span
+                    className={isLive ? 'text-amber-400' : 'text-slate-500'}
+                  >
+                    {isLive
+                      ? countdown
+                      : auction.status === 'FINISHED'
+                        ? 'Closed'
+                        : countdown}
+                  </span>
+                </div>
+
+                <button
+                  className="button-primary mt-5 w-full justify-center"
+                  onClick={() => {
+                    if (!user) {
+                      onGoLogin();
+                    }
+                  }}
+                  type="button"
+                >
+                  {user ? 'Open lot' : 'Log in to bid'}
+                </button>
+              </article>
+            );
+          })}
+        </section>
+      </div>
     </main>
   );
 }
